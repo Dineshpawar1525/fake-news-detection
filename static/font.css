@@ -1,4 +1,0 @@
-/* Custom fonts disabled - using fallback fonts */
-@font-face{font-family:"Oswald"; font-style:normal; font-weight:400; src:local("Arial")}
-@font-face{font-family:"Varela"; font-style:normal; font-weight:400; src:local("Verdana")}
-@font-face{font-family:"Open Sans"; font-style:normal; font-weight:400; src:local("Open Sans"),local("OpenSans"),url("..static/fonts/OpenSans-400.woff") format("woff")}
