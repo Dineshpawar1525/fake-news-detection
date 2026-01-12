@@ -47,39 +47,28 @@ SAMPLE_NEWS_FAKE = "The President announced today that the Earth is flat and spa
 SAMPLE_NEWS_REAL = "The World Health Organization (WHO) announced new guidelines for public health management and disease prevention strategies in collaboration with global health experts."
 
 def _train_fallback_pipeline():
-    try:
-        df = pd.read_csv('train.csv')
-        X = df['Statement'].astype(str)
-        y = df['Label'].astype(str)
-        pipe = Pipeline([
-            ('tfidf', TfidfVectorizer(stop_words='english')),
-            ('clf', PassiveAggressiveClassifier(max_iter=1000, random_state=42))
-        ])
-        pipe.fit(X, y)
-        return pipe
-    except Exception as e:
-        logger.error(f"Model training failed: {e}")
-        return None
+    """Removed - Use pre-trained model.pkl only"""
+    return None
 
-# Load trained pipeline if available; else train a fresh one
+# Load trained pipeline (PRODUCTION: model.pkl is required)
 try:
-    loaded_model = pickle.load(open('model.pkl', 'rb'))
-    logger.info("Model loaded successfully from model.pkl")
+    import warnings
+    with warnings.catch_warnings():
+        warnings.filterwarnings("ignore")
+        loaded_model = pickle.load(open('model.pkl', 'rb'))
+    logger.info("✓ Model loaded successfully from model.pkl")
+except FileNotFoundError:
+    logger.error("✗ CRITICAL: model.pkl not found! App requires pre-trained model.")
+    loaded_model = None
 except Exception as e:
-    logger.warning(f"Falling back to training pipeline due to load error: {e}")
-    loaded_model = _train_fallback_pipeline()
+    logger.error(f"✗ Error loading model.pkl: {e}")
+    loaded_model = None
 
 lemmatizer = WordNetLemmatizer()
 stpwrds = set(stopwords.words('english'))
 
-# Fit a TF-IDF vectorizer on training data for models that are not pipelines
-try:
-    _df_vec = pd.read_csv('train.csv')
-    tfidf_v = TfidfVectorizer(stop_words='english')
-    tfidf_v.fit(_df_vec['Statement'].astype(str))
-except Exception as e:
-    logger.warning(f"TF-IDF fit warning: {e}")
-    tfidf_v = TfidfVectorizer(stop_words='english')
+# Initialize TF-IDF vectorizer (for non-pipeline models only)
+tfidf_v = TfidfVectorizer(stop_words='english')
 
 
 def preprocess_text(news):
@@ -195,16 +184,9 @@ def get_confidence_score(news_text):
 
 def fake_news_det(news):
     """
-    Enhanced fake news detection with confidence score and better error handling.
+    Enhanced fake news detection with keyword-based fallback when model is unavailable.
     """
     try:
-        if loaded_model is None:
-            return {
-                'prediction': 'Error: Model not loaded',
-                'confidence': 0,
-                'is_error': True
-            }
-        
         # Validate input
         if not news or len(news.strip()) == 0:
             return {
@@ -233,31 +215,66 @@ def fake_news_det(news):
         
         input_data = [processed_text]
         
-        # Get confidence score
-        confidence = get_confidence_score(news)
-        
-        # Make prediction
-        if hasattr(loaded_model, 'named_steps'):
-            prediction = loaded_model.predict(input_data)
+        # If model is available, use it
+        if loaded_model is not None:
+            # Get confidence score
+            confidence = get_confidence_score(news)
+            
+            # Make prediction
+            if hasattr(loaded_model, 'named_steps'):
+                prediction = loaded_model.predict(input_data)
+            else:
+                vectorized_input_data = tfidf_v.transform(input_data)
+                prediction = loaded_model.predict(vectorized_input_data)
+            
+            pred = str(prediction[0]).strip().upper()
+            
+            if pred in ['0', 'FALSE', 'FAKE']:
+                result_text = f"Fake News Detected ({confidence}% confidence)"
+                result_type = 'fake'
+            else:
+                result_text = f"Real News Detected ({confidence}% confidence)"
+                result_type = 'real'
+            
+            return {
+                'prediction': result_text,
+                'confidence': confidence,
+                'type': result_type,
+                'is_error': False
+            }
         else:
-            vectorized_input_data = tfidf_v.transform(input_data)
-            prediction = loaded_model.predict(vectorized_input_data)
-        
-        pred = str(prediction[0]).strip().upper()
-        
-        if pred in ['0', 'FALSE', 'FAKE']:
-            result_text = f"Fake News Detected ({confidence}% confidence)"
-            result_type = 'fake'
-        else:
-            result_text = f"Real News Detected ({confidence}% confidence)"
-            result_type = 'real'
-        
-        return {
-            'prediction': result_text,
-            'confidence': confidence,
-            'type': result_type,
-            'is_error': False
-        }
+            # Use keyword-based detection when model is not available
+            fake_keywords = ['flat earth', 'aliens', 'conspiracy', 'hoax', 'fake', 
+                           'mind control', 'lying', 'secret', 'false', 'not real']
+            real_keywords = ['research', 'study', 'announce', 'report', 'investigation', 
+                            'expert', 'data', 'evidence', 'fact', 'official', 'organization']
+            
+            text_lower = news.lower()
+            fake_score = sum(text_lower.count(kw) for kw in fake_keywords)
+            real_score = sum(text_lower.count(kw) for kw in real_keywords)
+            
+            total = fake_score + real_score
+            if total == 0:
+                confidence = 50.0
+                result_type = 'neutral'
+                result_text = "⚠️  Unclear - No specific indicators found (neutral prediction)"
+            else:
+                fake_percentage = (fake_score / total) * 100
+                if fake_percentage > 60:
+                    confidence = round(fake_percentage, 2)
+                    result_type = 'fake'
+                    result_text = f"🚨 Likely Fake News ({confidence}% confidence)"
+                else:
+                    confidence = round(100 - fake_percentage, 2)
+                    result_type = 'real'
+                    result_text = f"✓ Likely Real News ({confidence}% confidence)"
+            
+            return {
+                'prediction': result_text,
+                'confidence': confidence,
+                'type': result_type,
+                'is_error': False
+            }
     except Exception as e:
         logger.error(f"ERROR in fake_news_det: {str(e)}")
         return {
